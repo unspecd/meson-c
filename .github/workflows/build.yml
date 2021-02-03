@@ -1,0 +1,76 @@
+name: Build
+on: [push, pull_request]
+jobs:
+
+  posix:
+    name: ${{ matrix.os }} (${{ matrix.variant }})
+    runs-on: ${{ matrix.os }}-latest
+    if: >
+      !contains(toJson(github.event.commits), '[ci skip]') &&
+      !contains(github.event.pull_request.title, '[ci skip]') &&
+      !contains(github.event.pull_request.body, '[ci skip]')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, macos ]
+        variant: [ check, coverage ]
+
+    env:
+      COVERAGE: ${{ matrix.variant == 'coverage' && '1' || '0' }}
+      VALGRIND: ${{ matrix.os == 'ubuntu' && matrix.variant == 'check' && '1' || '0' }}
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install tools
+      run: |
+        if [ ${{ matrix.variant }} == check ]; then
+          ubuntu_packages=valgrind
+        fi
+        case "${{ matrix.os }}" in
+          macos)  brew install lcov ;;
+          ubuntu) sudo apt install lcov ${ubuntu_packages} ;;
+          *)      exit 1 ;;
+        esac
+
+    - name: Build
+      run: make -j$(nproc) all-tests
+
+    - name: Check
+      run: make check
+
+    - name: Coverage
+      if: ${{ matrix.variant == 'coverage' }}
+      run: make coverage
+
+    - name: Upload report
+      if: ${{ matrix.variant == 'coverage' }}
+      uses: codecov/codecov-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: build/coverage.info
+
+
+  void:
+    name: alpine (musl)
+    runs-on: ubuntu-18.04
+    if: >
+      !contains(toJson(github.event.commits), '[ci skip]') &&
+      !contains(github.event.pull_request.title, '[ci skip]') &&
+      !contains(github.event.pull_request.body, '[ci skip]')
+
+    container:
+      image: 'alpine'
+
+    steps:
+    - name: Prepare container
+      run: apk add build-base valgrind
+
+    - uses: actions/checkout@v1
+
+    - name: Build
+      run: make -j$(nproc) all-tests
+
+    - name: Check (valgrind)
+      run: make check VALGRIND=1
